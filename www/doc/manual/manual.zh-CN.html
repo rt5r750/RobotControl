@@ -396,7 +396,7 @@
 <p>需设备网络可达 <code>api.telegram.org</code>（大陆网络通常需系统代理）；反向查询用 getUpdates 长轮询，无需公网 IP。</p>
 <p><strong>飞书接入（二选一）</strong></p>
 <ul>
-<li><strong>自定义机器人 Webhook（仅推送）</strong>：群设置 → 群机器人 → 添加机器人 → 自定义机器人，复制 <strong>Webhook URL</strong> 填入。此模式不能接收斜杠指令，且<strong>只能发到群</strong>（不能与机器人单聊）。</li>
+<li><strong>自定义机器人 Webhook（仅推送）</strong>：群设置 → 群机器人 → 添加机器人 → 自定义机器人，复制 <strong>Webhook URL</strong> 填入。此模式不能接收斜杠指令，且<strong>只能发到群</strong>（不能与机器人单聊）。浏览器端使用请选此模式（自建应用需原生桥；浏览器下为尽力投递、不校验回执）。</li>
 </ul>
 <ul>
 <li><strong>自建应用（双向）</strong>：飞书开放平台创建企业自建应用 → 开启机器人能力 → 申请 <code>im:message</code> 权限 → 发布版本；填入 <strong>App ID / App Secret</strong> 即可，<strong>无需手填 Chat ID</strong>——「接收目标」留空即全自动：自动发现机器人会话或应用授权用户，点「自动获取会话 ID」还可一键创建「Clawbot 通知」群；也可填飞书邮箱/手机号。发送成功后自动回写会话 ID（反查轮询随之可用）；机器人主动发个人消息受限（错误 230101，常见于应用未发布正式版）时自动降级改投通知群。</li>

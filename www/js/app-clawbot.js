@@ -356,10 +356,11 @@
         return withBindNotice('feishu', cfg, function (msg) { return fsWebhookSendRaw(cfg, msg); }, text);
     }
     function fsWebhookSendRaw(cfg, text) {
+        var payload = JSON.stringify({ msg_type: 'text', content: { text: clipText(text) } });
         return clawbotFetch(trim(cfg.webhookUrl), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ msg_type: 'text', content: { text: clipText(text) } })
+            body: payload
         }).then(function (r) {
             var data = null;
             try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
@@ -368,6 +369,26 @@
                 throw new Error('Feishu webhook HTTP ' + r.status + ': ' + String(r.text).slice(0, 200));
             }
             return r;
+        }, function (err) {
+            /* 浏览器等无原生桥环境：飞书响应无 CORS 头，直连必被拦——
+               改用免预检简单请求（text/plain + no-cors）直发；请求可送达但回执不可读，按已投递处理 */
+            if (window.Android && typeof window.Android.httpFetchAsync === 'function') throw err;
+            return fsWebhookFireAndForget(cfg, payload);
+        });
+    }
+    function fsWebhookFireAndForget(cfg, payload) {
+        var url = trim(cfg.webhookUrl);
+        if (!/^https:\/\/open\.feishu\.cn\//i.test(url)) {
+            return Promise.reject(new Error(t('飞书 Webhook URL 需以 https://open.feishu.cn/ 开头', 'Feishu Webhook URL must start with https://open.feishu.cn/')));
+        }
+        return fetch(url, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+            body: payload
+        }).then(function () {
+            /* opaque 响应不可读：无法校验业务 code，按已投递处理（尽力而为） */
+            return { status: 200, text: '{"code":0,"opaque":true}' };
         });
     }
     var _fsTokenCache = { token: '', expireAt: 0 };
@@ -1032,8 +1053,8 @@
             '      <button type="button" class="btn-add clawbot-discover-btn" data-clawbot-discover="feishu"><i class="fa fa-magnifying-glass mr-1"></i>自动获取会话 ID</button>' +
             '      <button type="button" class="btn-add clawbot-test-btn" data-clawbot-test="feishu"><i class="fa fa-paper-plane mr-1"></i>发送测试消息</button>' +
             '    </div>' +
-            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-webhook') + '">Webhook 模式只能推送、不能接收斜杠指令，且只能发到群（不能与机器人单聊）。</p>' +
-            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-app') + '">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并发布版本，无需手填 Chat ID：接收目标留空即全自动（自动发现机器人会话/授权用户，点「自动获取会话 ID」还能一键建「Clawbot 通知」群），也可填飞书邮箱/手机号/oc_/ou_；发送成功自动回写会话 ID，反查轮询随之可用。</p>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-webhook') + '">Webhook 模式只能推送、不能接收斜杠指令，且只能发到群（不能与机器人单聊）。浏览器端使用请选此模式（自建应用需原生桥，浏览器跨域受限）；浏览器下为尽力投递、不校验回执。</p>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-app') + '">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并发布版本，无需手填 Chat ID：接收目标留空即全自动（自动发现机器人会话/授权用户，点「自动获取会话 ID」还能一键建「Clawbot 通知」群），也可填飞书邮箱/手机号/oc_/ou_；发送成功自动回写会话 ID，反查轮询随之可用。浏览器端无原生桥请改用 Webhook 模式。</p>' +
             '    <p class="text-xs text-[#8fbc8f]/70 mt-1">接入教程：<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener noreferrer">飞书官方 · 自定义机器人 ↗</a>、<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/bot-overview" target="_blank" rel="noopener noreferrer">飞书官方 · 机器人概览 ↗</a></p>' +
             '  </div>' +
             '  <div class="clawbot-help">' +

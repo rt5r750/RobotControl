@@ -396,7 +396,7 @@
 <p>The device must reach <code>api.telegram.org</code> (a system proxy is usually needed in mainland China). Reverse queries use getUpdates long polling and need no public IP.</p>
 <p><strong>Feishu (choose one)</strong></p>
 <ul>
-<li><strong>Custom bot Webhook (push only)</strong>: group settings → Group Bots → Add Bot → Custom Bot, copy the <strong>Webhook URL</strong>. This mode cannot receive slash commands and can only post to <strong>groups</strong> (no private chats with the bot).</li>
+<li><strong>Custom bot Webhook (push only)</strong>: group settings → Group Bots → Add Bot → Custom Bot, copy the <strong>Webhook URL</strong>. This mode cannot receive slash commands and can only post to <strong>groups</strong> (no private chats with the bot). Use this mode in a browser (custom apps need the native bridge; browser delivery is best-effort without receipt verification).</li>
 </ul>
 <ul>
 <li><strong>Custom app (bidirectional)</strong>: create an enterprise custom app on the Feishu Open Platform → enable the bot capability → request the <code>im:message</code> scope → publish a version; fill <strong>App ID / App Secret</strong> only — <strong>no manual Chat ID needed</strong>: leave <strong>Target</strong> blank for full auto (bot chats / the authorized user are detected automatically; <strong>&quot;Auto detect Chat ID&quot;</strong> can even create a &quot;Clawbot 通知&quot; notice group for you), or fill a Feishu email / mobile. The session id is written back after the first successful send (slash queries then work). If proactive DMs are blocked (error 230101, common before the app is published), delivery automatically falls back to the notice group.</li>

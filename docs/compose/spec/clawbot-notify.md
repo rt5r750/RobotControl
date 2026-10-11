@@ -36,7 +36,7 @@
 
 ### 飞书（两种模式，v1.13.1 起免手填 Chat ID）
 - **接收目标（原 Chat ID）选填、留空全自动**（官方教程口径：教程从不让用户填 Chat ID）：留空=自动发现机器人所在会话（`GET /im/v1/chats`）或**应用授权范围里的唯一用户**（`GET /contact/v3/scopes`，免填一切 ID）并回写配置/表单；「自动获取会话 ID」按钮无会话时**一键创建「Clawbot 通知」群**（`POST /im/v1/chats` 拉入授权用户）；**邮箱**=`receive_id_type=email`（免额外权限，发送后回写会话 ID）；手机号=经 `POST /contact/v3/users/batch_get_id` 解析 open_id（需 `contact:user.id:readonly`）；`oc_`=会话 `chat_id`、`ou_`=个人 `open_id`、其他=`user_id`。**发送成功自动回写响应 `data.chat_id`**（邮箱/手机号/用户 ID 首发即转会话直达；反查轮询仅对 `oc_` 启用）；**230101（机器人主动发个人消息暂不可用，常见于应用未发布正式版）自动降级改投机器人所在会话**。错误码人话指引：99991672 缺权限 / 230006 未开机器人能力 / 230013 可用范围 / 230002 拉群 / 230001·99992351 目标无效 / 230101 个人消息受限。Webhook 模式仅群聊（官方限制）。
-- **webhook 仅推送**：`POST https://open.feishu.cn/open-apis/bot/v2/hook/<id>`，body `{msg_type:'text', content:{text}}`；不能收消息。
+- **webhook 仅推送**：`POST https://open.feishu.cn/open-apis/bot/v2/hook/<id>`，body `{msg_type:'text', content:{text}}`；不能收消息。**浏览器免跨域直发（v1.13.3）**：飞书响应无 CORS 头，浏览器 fetch 直连必被拦——无原生桥时改用免预检简单请求（`Content-Type: text/plain` + `mode:'no-cors'`）直发，请求可送达（实测飞书按 JSON 解析、code 0），回执不可读、按尽力投递处理；浏览器端请用 webhook 模式（自建应用模式需原生桥）。
 - **自建应用双向**：
   - token：`POST /open-apis/auth/v3/tenant_access_token/internal`（app_id+app_secret），缓存至过期前 60s，401/99991663 清缓存重试一次。
   - 推送：`POST /open-apis/im/v1/messages?receive_id_type=chat_id`。
