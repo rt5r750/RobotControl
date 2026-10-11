@@ -1,7 +1,7 @@
 {
-  "version": "991886c48fb5",
-  "generatedAt": "2026-10-11T16:12:46.814Z",
-  "totalSize": 16327559,
+  "version": "159bad7f3935",
+  "generatedAt": "2026-10-11T16:36:17.286Z",
+  "totalSize": 16328286,
   "files": [
     {
       "path": "MimoTTSClient.js",
@@ -130,8 +130,8 @@
     },
     {
       "path": "js/app-core.js",
-      "size": 415459,
-      "hash": "08bfe21e59f7"
+      "size": 415964,
+      "hash": "0c6fe67c089f"
     },
     {
       "path": "js/app-desktop.js",
@@ -150,8 +150,8 @@
     },
     {
       "path": "js/i18n.js",
-      "size": 140618,
-      "hash": "571a293a7f56"
+      "size": 140840,
+      "hash": "dc619c0dd56b"
     },
     {
       "path": "js/platform-bootstrap.js",

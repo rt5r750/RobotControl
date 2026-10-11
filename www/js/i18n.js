@@ -957,6 +957,7 @@
         '留空自动发现 / 邮箱 / oc_ 会话 / ou_ 用户 / 手机号': 'Blank = auto-detect / email / oc_ chat / ou_ user / mobile',
         'AI 助理一键创建应用': 'Create app via AI assistant',
         '打开机器人会话（激活推送）': 'Open bot chat (activate DMs)',
+        'IM 通知推送组件未能加载——请刷新页面（仍不行请硬刷新 Ctrl+Shift+R）。': 'The IM notification component failed to load — refresh the page (hard refresh with Ctrl+Shift+R if needed).',
         '接入教程：': 'Setup guides: ',
         '飞书官方 · 自定义机器人 ↗': 'Feishu official · Custom Bot ↗',
         '飞书官方 · 机器人概览 ↗': 'Feishu official · Bot Overview ↗',

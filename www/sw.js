@@ -125,12 +125,31 @@ function syncVersion() {
                 state.cacheName = newName;
                 state.cachedHashes = null;   // 新缓存元数据按需重读
                 state.lastChanged = changedPaths;
-                // 删除其余全部 rc-www-* 旧缓存（rc-meta 版本指针保留）
-                return caches.keys().then(function (keys) {
-                    return Promise.all(keys.map(function (k) {
-                        if (k.indexOf(CACHE_PREFIX) === 0 && k !== newName) return caches.delete(k);
-                    }));
-                }).then(function () { return writeMetaVersion(manifest.version); });
+                /* 删除旧缓存前先把本次变更的文件预下载进新缓存：变更文件本是懒下载的，
+                   若切换后立刻断网（cache-miss 兜底网络也失败），文件会缺席致页面残缺
+                   （如 app-clawbot.js 缺失 → IM 通知推送设置整块空白）。
+                   预下载不全则保留旧缓存兜底，下次同步再清理。 */
+                var prefetch = Promise.resolve(true);
+                if (changedPaths && changedPaths.length) {
+                    prefetch = caches.open(newName).then(function (cache) {
+                        return Promise.all(changedPaths.map(function (p) {
+                            var abs = new URL(p, self.registration.scope).href;
+                            return fetch(abs, { cache: 'no-store' }).then(function (res) {
+                                if (res && res.status === 200) return cache.put(abs, res.clone()).then(function () { return true; });
+                                return false;
+                            }, function () { return false; });
+                        })).then(function (oks) { return oks.every(Boolean); });
+                    });
+                }
+                return prefetch.then(function (allOk) {
+                    if (!allOk) return null;
+                    // 删除其余全部 rc-www-* 旧缓存（rc-meta 版本指针保留）
+                    return caches.keys().then(function (keys) {
+                        return Promise.all(keys.map(function (k) {
+                            if (k.indexOf(CACHE_PREFIX) === 0 && k !== newName) return caches.delete(k);
+                        }));
+                    }).then(function () { return writeMetaVersion(manifest.version); });
+                });
             });
         });
     }).catch(function () {
@@ -240,7 +259,10 @@ function serveAsset(request) {
 
         return ensureIndex.then(function (hashes) {
             return cache.match(request).then(function (cached) {
-                if (!cached) return fromNetwork();
+                if (!cached) {
+                    // cache-miss：先网络，网络不可用时全局缓存兜底（预下载失败被保留的旧缓存）
+                    return fromNetwork().catch(function () { return caches.match(request); });
+                }
                 var recorded = hashes[rel];
                 if (recorded === undefined || recorded === state.hashes[rel]) return cached;
                 // 同 path 内容已更新 → 重新下载；网络失败回退旧内容

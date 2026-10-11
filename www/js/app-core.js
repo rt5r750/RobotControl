@@ -2788,6 +2788,12 @@
             // 回填 Clawbot 通知推送表单（v1.12.0）：激活页大窗改过配置后设置页同步显示
             if (window.ClawbotBridge && window.ClawbotBridge.fillForm) {
                 window.ClawbotBridge.fillForm('set-');
+            } else {
+                /* app-clawbot.js 未加载（残缺缓存/网络中断）：空板块给可行动提示而非静默消失 */
+                var clawHost = document.getElementById('clawbot-settings-body');
+                if (clawHost && !clawHost.querySelector('.clawbot-form')) {
+                    clawHost.innerHTML = '<p class="text-xs text-[#8fbc8f]/70">IM 通知推送组件未能加载——请刷新页面（仍不行请硬刷新 Ctrl+Shift+R）。</p>';
+                }
             }
         }
         
