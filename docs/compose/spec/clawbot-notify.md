@@ -30,7 +30,7 @@
 - 推送：`POST https://api.telegram.org/bot<token>/sendMessage`，body `{chat_id, text}`。
 - 查询：`GET .../getUpdates?timeout=25&offset=N` 长轮询（免公网 IP）；`offset`（=update_id+1）落 localStorage `robotClawbotTgOffset` 防重放。
 - 只响应配置 Chat ID 的消息（防他人私聊 bot 查询）；斜杠指令带 `@botname` 后缀会剥离。
-- **Chat ID 智能解析（v1.12.1）**：数字直用；`t.me/` 链接、`@用户名`、纯名规范化为 `@xxx` 经 `getChat` 解析数字 ID；解析结果等于 `getMe().id` 判为「bot 自己的用户名」并给指引（Chat 对象无 `is_bot` 字段，实测判定用 getMe 对比）；表单提供「自动获取会话 ID」按钮（`getUpdates?offset=-1&limit=1` 不消费历史，从最近消息发现 `chat.id`）。错误分类提示：chat not found / token 无效 / 网络错误。
+- **Chat ID 智能解析（v1.12.1，v1.12.2 加容错三重防护）**：数字直用；`t.me/` 链接、`@用户名`、纯名规范化为 `@xxx` 经 `getChat` 解析数字 ID；解析结果等于 `getMe().id` 判为「bot 自己的用户名」（Chat 对象无 `is_bot` 字段，实测判定用 getMe 对比）。容错链（用户实测根因：自动获取后未保存、配置残留 bot 自身用户名致推送被拦截且静默失败）：① 解析失败/命中 bot 自身 → **自动 `getUpdates?offset=-1` 发现最近会话 ID 并回写配置**；② 「自动获取会话 ID」按钮成功后**自动保存**（免点「应用更改」）；③ 推送失败写到该平台**状态位**（限频 60s/平台）。错误分类提示：chat not found / token 无效 / 网络错误。
 - 网络：需设备可达 api.telegram.org（大陆通常需系统代理）。
 
 ### 飞书（两种模式，v1.12.2 起支持单聊）
@@ -76,7 +76,7 @@
 
 ## UI
 
-- **设置页**新增第 14 组「IM 通知推送」（标题不带 Clawbot，说明文字含教程链接：飞书官方文档 ×2、Telegram 中文/英文教程，以及 iOS 无法侧载 Slave 时的替代用途）（`#clawbot-setting`）：三开关 + Telegram 区 + 飞书区（模式 radio 切换 webhook/app 字段显隐）+ 测试发送按钮 + 说明。表单由 `ClawbotBridge.formHtml('set-')` 渲染进 `#clawbot-settings-body`，随「应用更改」保存（`performSettingsSave` 调 `collectForm('set-')`，校验失败中止保存；表单未渲染跳过不覆盖）；每次打开设置 `fillForm('set-')` 回填。
+- **设置页**新增第 14 组「IM 通知推送」（标题不带 Clawbot）。两平台卡片布局统一「按钮在上、说明在下、教程链接在卡内」：Telegram 卡片教程按界面语言显隐（zh=中文教程 / en=官方英文），飞书卡片放两个官方文档；状态信息在各卡片标题行右侧独立显示；说明文字含 iOS 无法侧载 Slave 时的替代用途（`#clawbot-setting`）：三开关 + Telegram 区 + 飞书区（模式 radio 切换 webhook/app 字段显隐）+ 测试发送按钮 + 说明。表单由 `ClawbotBridge.formHtml('set-')` 渲染进 `#clawbot-settings-body`，随「应用更改」保存（`performSettingsSave` 调 `collectForm('set-')`，校验失败中止保存；表单未渲染跳过不覆盖）；每次打开设置 `fillForm('set-')` 回填。
 - **激活页**新增第 11 节「通知推送（Clawbot）」：状态行 `#clawbot-act-status`（未配置/已配置 xx）+「打开设置」按钮 → 弹出 `#clawbot-modal` 大窗（body 直下，`.clawbot-modal` z-index 70，参照 self-check-modal 样式），大窗内为同一套表单（`'act-'` 前缀），保存/取消/关闭均不影响激活完成（非必要项）。`setConfig` 后 `syncActivationStatus()` 刷新状态行。
 - 测试发送读当前表单值临时套用后发送、不落库（`setConfigSilent` 恢复原配置）。
 

@@ -224,8 +224,27 @@
                 });
             }
             var desc = (data && data.description) || '';
-            throw new Error(t('无法解析 Chat ID ' + input + '：' + (desc || '请确认用户名，或改用数字会话 ID（给 bot 发送 /start 后点「自动获取」）'),
-                'Cannot resolve Chat ID ' + input + ': ' + (desc || 'check the username, or use a numeric chat id (send /start to the bot and press "Auto detect")')));
+            /* 兜底：解析失败（常见于填了 bot 自己的用户名/链接）→ 尝试从最近消息自动发现
+               会话 ID 并回写配置（用户实测：自动获取后未保存，推送一直打到 bot 自身被拦截） */
+            return tryDiscoverFallback(tg, t('无法解析 Chat ID ' + input + '：', 'Cannot resolve Chat ID ' + input + ': ') + (desc || ''));
+        });
+    }
+    function tryDiscoverFallback(tg, errPrefix) {
+        return new Promise(function (resolve, reject) {
+            discoverTgChatId(tg, function (chatId, derr) {
+                if (!chatId) {
+                    reject(new Error(errPrefix + (derr || t('请填数字会话 ID（给 bot 发送 /start 后点「自动获取」）', 'use a numeric chat id (send /start to the bot and press "Auto detect")'))));
+                    return;
+                }
+                /* 自动修正配置里的 Chat ID（免去「应用更改」） */
+                try {
+                    var cfg = getConfig();
+                    cfg.telegram.chatId = chatId;
+                    setConfigSilent(cfg);
+                } catch (e) { /* ignore */ }
+                _tgResolved = { raw: trim(tg.chatId), resolved: chatId };
+                resolve(chatId);
+            });
         });
     }
     /* 「自动获取」：从 getUpdates 最近一条消息发现会话 ID（offset=-1 不消费历史） */
@@ -387,6 +406,7 @@
 
     /* ---------- 推送队列（每平台串行，≥1s 间隔，空白内容丢弃） ---------- */
     var _queues = { telegram: [], feishu: [] };
+    var _pushFailShown = {};
     var _queueBusy = { telegram: false, feishu: false };
     function enqueue(platform, text) {
         if (!trim(text)) return;                 // 空白指令/空白内容不支持推送
@@ -410,6 +430,13 @@
         _queueBusy[platform] = true;
         sender.then(function () { /* sent */ }, function (err) {
             try { console.warn('[Clawbot] push failed (' + platform + '):', err && err.message); } catch (e) { /* ignore */ }
+            /* 失败可见（限频 60s/平台）：写到该平台状态位，用户实测静默失败难排查 */
+            var now = Date.now();
+            if (now - (_pushFailShown[platform] || 0) > 60000) {
+                _pushFailShown[platform] = now;
+                var el = document.querySelector('.clawbot-form [id$="clawbot-' + (platform === 'telegram' ? 'tg' : 'fs') + '-status"]');
+                if (el) el.textContent = t('推送失败：', 'Push failed: ') + String((err && err.message) || err).slice(0, 80);
+            }
         }).then(function () {
             setTimeout(function () {
                 _queueBusy[platform] = false;
@@ -826,15 +853,15 @@
             '      <label class="flex items-center gap-1"><input type="radio" name="' + id('fs-mode') + '" value="webhook"><span>自定义机器人 Webhook（仅推送）</span></label>' +
             '      <label class="flex items-center gap-1"><input type="radio" name="' + id('fs-mode') + '" value="app"><span>自建应用（双向，支持斜杠指令）</span></label>' +
             '    </div>' +
-            '    <div id="' + id('fs-webhook-wrap') + '"><div class="activation-row"><label>Webhook URL</label><input type="text" id="' + id('fs-webhook') + '" class="setting-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></div>' +
-            '      <p class="text-xs text-[#8fbc8f]/70 mt-1">Webhook 模式只能推送、不能接收斜杠指令，且只能发到群（不能与机器人单聊）。</p></div>' +
+            '    <div id="' + id('fs-webhook-wrap') + '"><div class="activation-row"><label>Webhook URL</label><input type="text" id="' + id('fs-webhook') + '" class="setting-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></div></div>' +
             '    <div id="' + id('fs-app-wrap') + '"><div class="activation-row"><label>App ID</label><input type="text" id="' + id('fs-appid') + '" class="setting-input" placeholder="飞书开放平台 App ID"></div>' +
             '      <div class="activation-row"><label>App Secret</label><input type="password" id="' + id('fs-secret') + '" class="setting-input" placeholder="飞书开放平台 App Secret"></div>' +
-            '      <div class="activation-row"><label>Chat ID</label><input type="text" id="' + id('fs-chat') + '" class="setting-input" placeholder="群/单聊会话 oc_... 或个人 open_id（ou_...）"></div>' +
-            '      <p class="text-xs text-[#8fbc8f]/70 mt-1">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并把机器人拉进目标群。可与机器人单聊：填个人 open_id（ou_ 开头，仅推送）或单聊会话 ID（oc_ 开头，支持反查）。</p></div>' +
+            '      <div class="activation-row"><label>Chat ID</label><input type="text" id="' + id('fs-chat') + '" class="setting-input" placeholder="群/单聊会话 oc_... 或个人 open_id（ou_...）"></div></div>' +
             '    <div class="flex flex-wrap gap-2 mt-2">' +
             '      <button type="button" class="btn-add clawbot-test-btn" data-clawbot-test="feishu"><i class="fa fa-paper-plane mr-1"></i>发送测试消息</button>' +
             '    </div>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-webhook') + '">Webhook 模式只能推送、不能接收斜杠指令，且只能发到群（不能与机器人单聊）。</p>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-app') + '">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并把机器人拉进目标群。可与机器人单聊：填个人 open_id（ou_ 开头，仅推送）或单聊会话 ID（oc_ 开头，支持反查）。</p>' +
             '    <p class="text-xs text-[#8fbc8f]/70 mt-1">接入教程：<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener noreferrer">飞书官方 · 自定义机器人 ↗</a>、<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/bot-overview" target="_blank" rel="noopener noreferrer">飞书官方 · 机器人概览 ↗</a></p>' +
             '  </div>' +
             '  <div class="clawbot-help">' +
@@ -871,6 +898,10 @@
         var app = document.getElementById(prefix + 'clawbot-fs-app-wrap');
         if (wh) wh.style.display = mode === 'webhook' ? '' : 'none';
         if (app) app.style.display = mode === 'app' ? '' : 'none';
+        var noteWh = document.getElementById(prefix + 'clawbot-fs-note-webhook');
+        var noteApp = document.getElementById(prefix + 'clawbot-fs-note-app');
+        if (noteWh) noteWh.style.display = mode === 'webhook' ? '' : 'none';
+        if (noteApp) noteApp.style.display = mode === 'app' ? '' : 'none';
     }
 
     /* 读取表单 → 配置对象；表单未渲染返回 {skipped:true}，校验失败返回 {error} */
@@ -987,7 +1018,11 @@
                     var input = discWrap ? discWrap.querySelector('input[id$="clawbot-tg-chat"]') : null;
                     if (chatId) {
                         if (input) input.value = chatId;
-                        if (discStatus) discStatus.textContent = t('已获取会话 ID：', 'Chat id detected: ') + chatId;
+                        /* 自动保存（用户实测常忘记点「应用更改」导致推送失效） */
+                        var cfg2 = getConfig();
+                        cfg2.telegram.chatId = chatId;
+                        setConfigSilent(cfg2);
+                        if (discStatus) discStatus.textContent = t('已获取会话 ID：', 'Chat id detected: ') + chatId + t('（已自动保存）', ' (auto-saved)');
                     } else if (discStatus) {
                         discStatus.textContent = err || t('获取失败', 'Detection failed');
                     }
