@@ -396,12 +396,12 @@
 <p>需设备网络可达 <code>api.telegram.org</code>（大陆网络通常需系统代理）；反向查询用 getUpdates 长轮询，无需公网 IP。</p>
 <p><strong>飞书接入（二选一）</strong></p>
 <ul>
-<li><strong>自定义机器人 Webhook（仅推送）</strong>：群设置 → 群机器人 → 添加机器人 → 自定义机器人，复制 <strong>Webhook URL</strong> 填入。此模式不能接收斜杠指令。</li>
+<li><strong>自定义机器人 Webhook（仅推送）</strong>：群设置 → 群机器人 → 添加机器人 → 自定义机器人，复制 <strong>Webhook URL</strong> 填入。此模式不能接收斜杠指令，且<strong>只能发到群</strong>（不能与机器人单聊）。</li>
 </ul>
 <ul>
 <li><strong>自建应用（双向）</strong>：飞书开放平台创建企业自建应用 → 开启机器人能力 → 申请 <code>im:message</code> 权限 → 发布版本 → 把机器人拉进目标群；填入 <strong>App ID / App Secret / Chat ID</strong>。</li>
 </ul>
-<p>飞书大陆直连、无需代理；两平台可同时启用（消息双发，查询回复发回指令所在平台）。</p>
+<p>飞书大陆直连、无需代理；两平台可同时启用（消息双发，查询回复发回指令所在平台）。<strong>单聊支持</strong>：Telegram 支持与 bot 单聊；飞书自建应用可单聊——Chat ID 填个人 open_id（<code>ou_</code> 开头，仅推送）或单聊会话 ID（<code>oc_</code> 开头，支持斜杠查询）。</p>
 <p><strong>斜杠指令（本地解析、0 token）</strong></p>
 <div class="tbl-wrap"><table>
 <thead><tr><th>指令</th><th>作用</th></tr></thead>

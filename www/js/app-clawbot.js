@@ -105,20 +105,27 @@
        结果经 Android.getHttpFetchResult(cbId) 同步取回（避免大 JSON 注入转义问题）。
        返回 Promise<{status, text}>；网络层失败 reject。 */
     var _httpCbCounter = 0;
+    var FETCH_TIMEOUT_MS = 20000;   // 直连超时（AbortController）——超时判失败回退原生桥
+    var BRIDGE_TIMEOUT_MS = 30000;  // 原生桥兜底超时——保证 promise 必定结算（用户实测 Sending… 永挂）
     function clawbotFetch(url, options) {
         options = options || {};
         var method = String(options.method || 'GET').toUpperCase();
         var headers = options.headers || {};
         var body = options.body || null;
+        var aborter = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var directTimer = aborter ? setTimeout(function () { aborter.abort(); }, FETCH_TIMEOUT_MS) : null;
         var direct = fetch(url, {
             method: method,
             headers: headers,
-            body: body
+            body: body,
+            signal: aborter ? aborter.signal : undefined
         }).then(function (resp) {
             return resp.text().then(function (text) {
                 return { status: resp.status, text: text };
             });
         });
+        direct.then(clear, clear);
+        function clear() { if (directTimer) { clearTimeout(directTimer); directTimer = null; } }
         var nativeBridge = window.Android && typeof window.Android.httpFetchAsync === 'function' ? window.Android.httpFetchAsync : null;
         if (!nativeBridge) return direct;
         return direct.catch(function () {
@@ -128,10 +135,22 @@
             return new Promise(function (resolve, reject) {
                 var cbId = 'claw_' + (++_httpCbCounter) + '_' + Date.now();
                 window.__httpFetchCallbacks = window.__httpFetchCallbacks || {};
-                window.__httpFetchCallbacks[cbId] = { resolve: resolve, reject: reject };
+                var settled = false;
+                var bridgeTimer = setTimeout(function () {
+                    if (settled) return;
+                    settled = true;
+                    delete window.__httpFetchCallbacks[cbId];
+                    reject(new Error('native fetch timeout'));
+                }, BRIDGE_TIMEOUT_MS);
+                window.__httpFetchCallbacks[cbId] = {
+                    resolve: function (v) { if (settled) return; settled = true; clearTimeout(bridgeTimer); resolve(v); },
+                    reject: function (e) { if (settled) return; settled = true; clearTimeout(bridgeTimer); reject(e); }
+                };
                 try {
                     nativeBridge(url, JSON.stringify({ method: method, headers: headers, body: body }), cbId);
                 } catch (e) {
+                    clearTimeout(bridgeTimer);
+                    settled = true;
                     delete window.__httpFetchCallbacks[cbId];
                     reject(e);
                 }
@@ -330,24 +349,33 @@
         });
     }
     function fsAppSend(cfg, text) {
-        return withBindNotice('feishu', cfg, function (msg) { return fsAppSendRaw(cfg, msg); }, text);
+        return withBindNotice('feishu', cfg, function (msg) { return fsAppSendRaw(cfg, msg, 0); }, text);
     }
-    function fsAppSendRaw(cfg, text) {
+    /* 飞书单聊支持：receive_id 按前缀自动选类型——
+       oc_=群/单聊会话(chat_id)、ou_=个人(open_id，可单聊)、其他=user_id；
+       反查轮询仅支持会话 id（oc_），open_id/user_id 仅推送（UI 有说明）。 */
+    function fsReceiveType(id) {
+        if (/^oc_/.test(id)) return 'chat_id';
+        if (/^ou_/.test(id)) return 'open_id';
+        return 'user_id';
+    }
+    function fsAppSendRaw(cfg, text, retried) {
         return fsGetToken(cfg).then(function (token) {
-            return clawbotFetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id', {
+            var rid = trim(cfg.chatId);
+            return clawbotFetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=' + fsReceiveType(rid), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json; charset=utf-8', 'Authorization': 'Bearer ' + token },
                 body: JSON.stringify({
-                    receive_id: trim(cfg.chatId),
+                    receive_id: rid,
                     msg_type: 'text',
                     content: JSON.stringify({ text: clipText(text) })
                 })
             }).then(function (r) {
                 var data = null;
                 try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
-                if (r.status === 401 || (data && data.code === 99991663)) {
-                    _fsTokenCache = { token: '', expireAt: 0 };   // token 失效：清缓存重试一次
-                    return fsAppSendRaw(cfg, text);
+                if ((r.status === 401 || (data && data.code === 99991663)) && !retried) {
+                    _fsTokenCache = { token: '', expireAt: 0 };   // token 失效：清缓存重试一次（上限 1 次防死循环）
+                    return fsAppSendRaw(cfg, text, 1);
                 }
                 if (r.status !== 200 || (data && data.code !== 0)) {
                     throw new Error('Feishu sendMessage HTTP ' + r.status + ': ' + String(r.text).slice(0, 200));
@@ -633,6 +661,10 @@
         if (raw.charAt(0) !== '/') return null;
         var cmd = raw.slice(1).split(/[\s@]/)[0].toLowerCase();
         if (!cmd) return null;                        // 单独「/」= 空白指令
+        if (cmd === 'start' || cmd === 'bind') {
+            /* /start（用户在 bot 里发起会话）与 /bind 也回首次绑定提示词 */
+            return bindNoticeText();
+        }
         return buildReply(cmd);
     }
 
@@ -741,7 +773,7 @@
             _tgPolling = true;
             tgPollLoop();
         }
-        if (cfg.queryEnabled && cfg.feishu.enabled && cfg.feishu.mode === 'app' && trim(cfg.feishu.appId)) {
+        if (cfg.queryEnabled && cfg.feishu.enabled && cfg.feishu.mode === 'app' && trim(cfg.feishu.appId) && /^oc_/.test(trim(cfg.feishu.chatId))) {
             _fsPolling = true;
             fsPollLoop();
         }
@@ -766,6 +798,8 @@
     /* ---------- 表单（设置组与激活页大窗共用；prefix 区分实例） ---------- */
     function formHtml(prefix) {
         function id(name) { return prefix + 'clawbot-' + name; }
+        /* 教程链接分板块放各卡片下（v1.12.2）：Telegram 教程按界面语言显隐
+           （zh=中文教程 / en=官方英文教程），飞书放两个官方文档；状态位在各板块标题行右侧 */
         return '' +
             '<div class="clawbot-form">' +
             '  <div class="clawbot-switch-row">' +
@@ -774,7 +808,7 @@
             '    <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="' + id('query-on') + '"><span>响应斜杠指令查询（0 token 本地回复）</span></label>' +
             '  </div>' +
             '  <div class="clawbot-platform">' +
-            '    <div class="clawbot-platform-title">Telegram</div>' +
+            '    <div class="clawbot-platform-title">Telegram<span class="clawbot-platform-status" id="' + id('tg-status') + '"></span></div>' +
             '    <label class="flex items-center gap-2 text-sm mb-2"><input type="checkbox" id="' + id('tg-on') + '"><span>启用 Telegram</span></label>' +
             '    <div class="activation-row"><label>Bot Token</label><input type="text" id="' + id('tg-token') + '" class="setting-input" placeholder="123456789:AA...（@BotFather 获取）"></div>' +
             '    <div class="activation-row"><label>Chat ID</label><input type="text" id="' + id('tg-chat') + '" class="setting-input" placeholder="数字会话 ID / @用户名 / t.me 链接"></div>' +
@@ -782,26 +816,29 @@
             '      <button type="button" class="btn-add clawbot-discover-btn" data-clawbot-discover="telegram"><i class="fa fa-magnifying-glass mr-1"></i>自动获取会话 ID</button>' +
             '      <button type="button" class="btn-add clawbot-test-btn" data-clawbot-test="telegram"><i class="fa fa-paper-plane mr-1"></i>发送测试消息</button>' +
             '    </div>' +
-            '    <p class="text-xs text-[#8fbc8f]/70 mt-1">先在 Telegram 给该 bot 发送 /start，再点「自动获取」填入你的会话 ID（不能填 bot 自己的用户名）。需设备网络可达 api.telegram.org（大陆网络通常需系统代理）；反向查询用 getUpdates 长轮询，无需公网 IP。</p>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1">先在 Telegram 给该 bot 发送 /start，再点「自动获取」填入你的会话 ID（不能填 bot 自己的用户名）。需设备网络可达 api.telegram.org（大陆网络通常需系统代理）；反向查询用 getUpdates 长轮询，无需公网 IP。支持与 bot 单聊。</p>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1">接入教程：<a class="clawbot-guide-zh underline hover:text-[#c0e4c0]" href="https://github.com/danshui-git/shuoming/blob/master/bot.md" target="_blank" rel="noopener noreferrer">Telegram 教程（中文）↗</a><a class="clawbot-guide-en underline hover:text-[#c0e4c0]" href="https://core.telegram.org/bots/tutorial" target="_blank" rel="noopener noreferrer">Telegram Tutorial (English) ↗</a></p>' +
             '  </div>' +
             '  <div class="clawbot-platform">' +
-            '    <div class="clawbot-platform-title">飞书 / Feishu</div>' +
+            '    <div class="clawbot-platform-title">飞书 / Feishu<span class="clawbot-platform-status" id="' + id('fs-status') + '"></span></div>' +
             '    <label class="flex items-center gap-2 text-sm mb-2"><input type="checkbox" id="' + id('fs-on') + '"><span>启用飞书</span></label>' +
             '    <div class="flex flex-wrap gap-3 mb-2 text-sm">' +
             '      <label class="flex items-center gap-1"><input type="radio" name="' + id('fs-mode') + '" value="webhook"><span>自定义机器人 Webhook（仅推送）</span></label>' +
             '      <label class="flex items-center gap-1"><input type="radio" name="' + id('fs-mode') + '" value="app"><span>自建应用（双向，支持斜杠指令）</span></label>' +
             '    </div>' +
-            '    <div id="' + id('fs-webhook-wrap') + '"><div class="activation-row"><label>Webhook URL</label><input type="text" id="' + id('fs-webhook') + '" class="setting-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></div></div>' +
+            '    <div id="' + id('fs-webhook-wrap') + '"><div class="activation-row"><label>Webhook URL</label><input type="text" id="' + id('fs-webhook') + '" class="setting-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></div>' +
+            '      <p class="text-xs text-[#8fbc8f]/70 mt-1">Webhook 模式只能推送、不能接收斜杠指令，且只能发到群（不能与机器人单聊）。</p></div>' +
             '    <div id="' + id('fs-app-wrap') + '"><div class="activation-row"><label>App ID</label><input type="text" id="' + id('fs-appid') + '" class="setting-input" placeholder="飞书开放平台 App ID"></div>' +
             '      <div class="activation-row"><label>App Secret</label><input type="password" id="' + id('fs-secret') + '" class="setting-input" placeholder="飞书开放平台 App Secret"></div>' +
-            '      <div class="activation-row"><label>Chat ID</label><input type="text" id="' + id('fs-chat') + '" class="setting-input" placeholder="群 Chat ID（oc_...）"></div></div>' +
-            '    <button type="button" class="btn-add clawbot-test-btn mt-2" data-clawbot-test="feishu"><i class="fa fa-paper-plane mr-1"></i>发送测试消息</button>' +
-            '    <p class="text-xs text-[#8fbc8f]/70 mt-1">Webhook 模式只能推送、不能接收斜杠指令；双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并把机器人拉进目标群。</p>' +
+            '      <div class="activation-row"><label>Chat ID</label><input type="text" id="' + id('fs-chat') + '" class="setting-input" placeholder="群/单聊会话 oc_... 或个人 open_id（ou_...）"></div>' +
+            '      <p class="text-xs text-[#8fbc8f]/70 mt-1">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并把机器人拉进目标群。可与机器人单聊：填个人 open_id（ou_ 开头，仅推送）或单聊会话 ID（oc_ 开头，支持反查）。</p></div>' +
+            '    <div class="flex flex-wrap gap-2 mt-2">' +
+            '      <button type="button" class="btn-add clawbot-test-btn" data-clawbot-test="feishu"><i class="fa fa-paper-plane mr-1"></i>发送测试消息</button>' +
+            '    </div>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1">接入教程：<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener noreferrer">飞书官方 · 自定义机器人 ↗</a>、<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/bot-overview" target="_blank" rel="noopener noreferrer">飞书官方 · 机器人概览 ↗</a></p>' +
             '  </div>' +
             '  <div class="clawbot-help">' +
             '    <p class="text-xs text-[#8fbc8f]/70">支持的斜杠指令：/help /query /mode /emotion /runtime /tasks /model /status /buttons /links；空白指令不支持。回复语言跟随本控制台语言设置，模式名等文案取实际设置值；账号密码与 API Key 只回「已设置/未设置」。全部收发均为纯 API 直连，不经过任何大模型（0 token 消耗）。如果无法安装 Slave 端（例如 iOS 设备无法侧载），可以使用该方法将命令推送到 IM 软件。</p>' +
-            '    <p class="text-xs text-[#8fbc8f]/70 mt-1">接入教程：<a href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener noreferrer" class="underline hover:text-[#c0e4c0]">飞书官方 · 自定义机器人 ↗</a>、<a href="https://open.feishu.cn/document/client-docs/bot-v3/bot-overview" target="_blank" rel="noopener noreferrer" class="underline hover:text-[#c0e4c0]">飞书官方 · 机器人概览 ↗</a>、<a href="https://github.com/danshui-git/shuoming/blob/master/bot.md" target="_blank" rel="noopener noreferrer" class="underline hover:text-[#c0e4c0]">Telegram 教程（中文）↗</a>、<a href="https://core.telegram.org/bots/tutorial" target="_blank" rel="noopener noreferrer" class="underline hover:text-[#c0e4c0]">Telegram Tutorial (English) ↗</a></p>' +
-            '    <p class="clawbot-test-status text-xs text-[#8fbc8f]/70 mt-1"></p>' +
             '  </div>' +
             '</div>';
     }
@@ -931,9 +968,9 @@
             var discBtn = target ? target.closest('.clawbot-discover-btn') : null;
             if (discBtn) {
                 var discWrap = discBtn.closest('.clawbot-form');
-                var discStatus = discWrap ? discWrap.querySelector('.clawbot-test-status') : null;
                 var discProbe = discWrap ? discWrap.querySelector('input[id*="clawbot-"]') : null;
                 var discPrefix = discProbe && discProbe.id.indexOf('act-') === 0 ? 'act-' : 'set-';
+                var discStatus = document.getElementById(discPrefix + 'clawbot-tg-status');
                 var discCollected = collectForm(discPrefix);
                 if (discCollected.error) {
                     if (discStatus) discStatus.textContent = discCollected.error;
@@ -960,11 +997,11 @@
             var btn = target ? target.closest('.clawbot-test-btn') : null;
             if (!btn) return;
             var wrap = btn.closest('.clawbot-form');
-            var statusEl = wrap ? wrap.querySelector('.clawbot-test-status') : null;
             var platform = btn.getAttribute('data-clawbot-test');
             /* 测试发送读取当前表单（含未保存内容）：临时套用副本后发送，不落库 */
             var probe = wrap ? wrap.querySelector('input[id*="clawbot-"]') : null;
             var prefix = probe && probe.id.indexOf('act-') === 0 ? 'act-' : 'set-';
+            var statusEl = document.getElementById(prefix + 'clawbot-' + (platform === 'telegram' ? 'tg' : 'fs') + '-status');
             var collected = collectForm(prefix);
             if (collected.error) {
                 if (statusEl) statusEl.textContent = collected.error;

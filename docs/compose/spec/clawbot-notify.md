@@ -20,6 +20,7 @@
 
 - 空白内容不推送；消息超 3500 字符截断（Telegram 上限 4096）。
 - 推送队列按平台串行、间隔 ≥1s（防 Telegram/飞书限流），发送失败仅记 console.warn 不重试。
+- **网络超时（v1.12.2）**：直连 fetch 20s AbortController 超时回退原生桥，桥侧 30s 兜底超时——promise 必定结算（修复 Sending… 永挂）；飞书 token 失效重试上限 1 次。
 - **轮询代际（v1.12.1）**：`restartPolling` 递增 `_pollGen`，循环链回调处校验代际——否则多次重启（保存设置/大窗保存）残留并行循环会把同一条斜杠指令消费多次、回复发多遍（用户实测三遍的根因）。
 - 双平台同时启用时消息双发。
 
@@ -32,7 +33,8 @@
 - **Chat ID 智能解析（v1.12.1）**：数字直用；`t.me/` 链接、`@用户名`、纯名规范化为 `@xxx` 经 `getChat` 解析数字 ID；解析结果等于 `getMe().id` 判为「bot 自己的用户名」并给指引（Chat 对象无 `is_bot` 字段，实测判定用 getMe 对比）；表单提供「自动获取会话 ID」按钮（`getUpdates?offset=-1&limit=1` 不消费历史，从最近消息发现 `chat.id`）。错误分类提示：chat not found / token 无效 / 网络错误。
 - 网络：需设备可达 api.telegram.org（大陆通常需系统代理）。
 
-### 飞书（两种模式）
+### 飞书（两种模式，v1.12.2 起支持单聊）
+- **单聊**：Chat ID 按前缀自动选 `receive_id_type`（`oc_`=群/单聊会话 `chat_id`、`ou_`=个人 `open_id`（仅推送）、其他=`user_id`）；反查轮询仅对 `oc_` 会话 ID 启用。Webhook 模式仅群聊（官方限制）。
 - **webhook 仅推送**：`POST https://open.feishu.cn/open-apis/bot/v2/hook/<id>`，body `{msg_type:'text', content:{text}}`；不能收消息。
 - **自建应用双向**：
   - token：`POST /open-apis/auth/v3/tenant_access_token/internal`（app_id+app_secret），缓存至过期前 60s，401/99991663 清缓存重试一次。

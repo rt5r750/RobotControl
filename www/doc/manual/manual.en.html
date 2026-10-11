@@ -396,12 +396,12 @@
 <p>The device must reach <code>api.telegram.org</code> (a system proxy is usually needed in mainland China). Reverse queries use getUpdates long polling and need no public IP.</p>
 <p><strong>Feishu (choose one)</strong></p>
 <ul>
-<li><strong>Custom bot Webhook (push only)</strong>: group settings → Group Bots → Add Bot → Custom Bot, copy the <strong>Webhook URL</strong>. This mode cannot receive slash commands.</li>
+<li><strong>Custom bot Webhook (push only)</strong>: group settings → Group Bots → Add Bot → Custom Bot, copy the <strong>Webhook URL</strong>. This mode cannot receive slash commands and can only post to <strong>groups</strong> (no private chats with the bot).</li>
 </ul>
 <ul>
 <li><strong>Custom app (bidirectional)</strong>: create an enterprise custom app on the Feishu Open Platform → enable the bot capability → request the <code>im:message</code> scope → publish a version → add the bot to the target group; fill <strong>App ID / App Secret / Chat ID</strong>.</li>
 </ul>
-<p>Feishu is directly reachable from mainland China with no proxy. Both platforms can be enabled at once (messages go to both; query replies return to the platform the command came from).</p>
+<p>Feishu is directly reachable from mainland China with no proxy. Both platforms can be enabled at once (messages go to both; query replies return to the platform the command came from). <strong>Private chats</strong>: Telegram supports chatting with the bot directly; Feishu custom apps can too — use a personal open_id (starts with <code>ou_</code>, push only) or a private-chat session id (starts with <code>oc_</code>, slash queries supported) as the Chat ID.</p>
 <p><strong>Slash commands (locally parsed, 0 token)</strong></p>
 <div class="tbl-wrap"><table>
 <thead><tr><th>Command</th><th>Returns</th></tr></thead>

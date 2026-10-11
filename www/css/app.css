@@ -5618,6 +5618,21 @@
 .clawbot-form .clawbot-test-status {
     min-height: 1.1em;
 }
+/* v1.12.2：状态位在各板块标题行右侧；Telegram 教程链接按界面语言显隐 */
+.clawbot-form .clawbot-platform-status {
+    margin-left: auto;
+    font-size: 0.72rem;
+    font-weight: 400;
+    color: #8fbc8f;
+    opacity: 0.85;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 55%;
+    text-align: right;
+}
+html[lang='en'] .clawbot-guide-zh { display: none; }
+html:not([lang='en']) .clawbot-guide-en { display: none; }
 .clawbot-form .activation-row > label {
     width: 8rem;
 }
