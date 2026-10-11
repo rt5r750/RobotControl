@@ -54,6 +54,22 @@
         var s = String(text == null ? '' : text);
         return s.length > MSG_MAX_LEN ? s.slice(0, MSG_MAX_LEN - 1) + '…' : s;
     }
+    function copyText(s) {
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(s); return true; }
+        } catch (e) { /* fall through */ }
+        try {
+            var ta = document.createElement('textarea');
+            ta.value = s;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+            return true;
+        } catch (e) { return false; }
+    }
 
     /* ---------- 配置 ---------- */
     function getConfig() {
@@ -543,8 +559,8 @@
             hint = t('请求参数无效（常见于接收目标格式不对）：可留空自动发现，或填邮箱 / oc_ 会话 / ou_ 用户',
                 'Invalid request parameter (often the target format): leave blank for auto-discovery, or use an email / oc_ chat / ou_ user');
         } else if (code === 230101) {
-            hint = t('机器人主动发个人消息暂不可用（常见于应用未发布正式版）：点「自动获取会话 ID」一键建通知群、把机器人拉进群，或发布应用版本',
-                'Proactive DMs are temporarily unavailable (usually before the app is published): press "Auto detect Chat ID" to create a notice group, add the bot to a group, or publish the app version');
+            hint = t('机器人主动发个人消息暂不可用：点「打开机器人会话」在飞书客户端打开一次机器人并发条消息后重试；或点「自动获取会话 ID」一键建通知群/把机器人拉进群（群路径不受此限）',
+                'Proactive DMs unavailable: press "Open bot chat", open the bot once in the Feishu client and send it a message, then retry; or press "Auto detect Chat ID" to create/use a notice group (groups are unaffected)');
         }
         return prefix + (hint ? '：' + hint : '：' + String(raw || '').slice(0, 160));
     }
@@ -1017,6 +1033,8 @@
     /* ---------- 表单（设置组与激活页大窗共用；prefix 区分实例） ---------- */
     function formHtml(prefix) {
         function id(name) { return prefix + 'clawbot-' + name; }
+        /* 浏览器端（无原生桥）飞书只保留 Webhook 模式：自建应用需桥且飞书 API 无 CORS */
+        var bridge = !!(window.Android && typeof window.Android.httpFetchAsync === 'function');
         /* 教程链接分板块放各卡片下（v1.12.2）：Telegram 教程按界面语言显隐
            （zh=中文教程 / en=官方英文教程），飞书放两个官方文档；状态位在各板块标题行右侧 */
         return '' +
@@ -1043,18 +1061,20 @@
             '    <label class="flex items-center gap-2 text-sm mb-2"><input type="checkbox" id="' + id('fs-on') + '"><span>启用飞书</span></label>' +
             '    <div class="flex flex-wrap gap-3 mb-2 text-sm">' +
             '      <label class="flex items-center gap-1"><input type="radio" name="' + id('fs-mode') + '" value="webhook"><span>自定义机器人 Webhook（仅推送）</span></label>' +
-            '      <label class="flex items-center gap-1"><input type="radio" name="' + id('fs-mode') + '" value="app"><span>自建应用（双向，支持斜杠指令）</span></label>' +
+            (bridge ? '      <label class="flex items-center gap-1"><input type="radio" name="' + id('fs-mode') + '" value="app"><span>自建应用（双向，支持斜杠指令）</span></label>' : '') +
             '    </div>' +
             '    <div id="' + id('fs-webhook-wrap') + '"><div class="activation-row"><label>Webhook URL</label><input type="text" id="' + id('fs-webhook') + '" class="setting-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></div></div>' +
-            '    <div id="' + id('fs-app-wrap') + '"><div class="activation-row"><label>App ID</label><input type="text" id="' + id('fs-appid') + '" class="setting-input" placeholder="飞书开放平台 App ID"></div>' +
+            '    <div id="' + id('fs-app-wrap') + '"' + (bridge ? '' : ' style="display:none"') + '><div class="activation-row"><label>App ID</label><input type="text" id="' + id('fs-appid') + '" class="setting-input" placeholder="飞书开放平台 App ID"></div>' +
             '      <div class="activation-row"><label>App Secret</label><input type="password" id="' + id('fs-secret') + '" class="setting-input" placeholder="飞书开放平台 App Secret"></div>' +
             '      <div class="activation-row"><label>接收目标</label><input type="text" id="' + id('fs-chat') + '" class="setting-input" placeholder="留空自动发现 / 邮箱 / oc_ 会话 / ou_ 用户 / 手机号"></div></div>' +
             '    <div class="flex flex-wrap gap-2 mt-2">' +
             '      <button type="button" class="btn-add clawbot-discover-btn" data-clawbot-discover="feishu"><i class="fa fa-magnifying-glass mr-1"></i>自动获取会话 ID</button>' +
             '      <button type="button" class="btn-add clawbot-test-btn" data-clawbot-test="feishu"><i class="fa fa-paper-plane mr-1"></i>发送测试消息</button>' +
+            '      <button type="button" class="btn-add clawbot-wizard-btn" data-clawbot-wizard="app-create"><i class="fa fa-wand-magic-sparkles mr-1"></i>AI 助理一键创建应用</button>' +
+            '      <button type="button" class="btn-add clawbot-wizard-btn" data-clawbot-wizard="bot-open"><i class="fa fa-comment-dots mr-1"></i>打开机器人会话（激活推送）</button>' +
             '    </div>' +
             '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-webhook') + '">Webhook 模式只能推送、不能接收斜杠指令，且只能发到群（不能与机器人单聊）。浏览器端使用请选此模式（自建应用需原生桥，浏览器跨域受限）；浏览器下为尽力投递、不校验回执。</p>' +
-            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-app') + '">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并发布版本，无需手填 Chat ID：接收目标留空即全自动（自动发现机器人会话/授权用户，点「自动获取会话 ID」还能一键建「Clawbot 通知」群），也可填飞书邮箱/手机号/oc_/ou_；发送成功自动回写会话 ID，反查轮询随之可用。浏览器端无原生桥请改用 Webhook 模式。</p>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-app') + '">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并发布版本，无需手填 Chat ID：接收目标留空即全自动（自动发现机器人会话/授权用户，点「自动获取会话 ID」还能一键建「Clawbot 通知」群），也可填飞书邮箱/手机号/oc_/ou_；发送成功自动回写会话 ID，反查轮询随之可用。浏览器端无原生桥请改用 Webhook 模式。接入向导：点「AI 助理一键创建应用」→ 到智能助手粘贴发送 → 生成项目后点「立即配置」创建应用 → 把 App ID/Secret 填回本表单 → 点「打开机器人会话」发条消息激活个人推送（对应 230101）。</p>' +
             '    <p class="text-xs text-[#8fbc8f]/70 mt-1">接入教程：<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener noreferrer">飞书官方 · 自定义机器人 ↗</a>、<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/bot-overview" target="_blank" rel="noopener noreferrer">飞书官方 · 机器人概览 ↗</a></p>' +
             '  </div>' +
             '  <div class="clawbot-help">' +
@@ -1075,8 +1095,11 @@
         set('tg-token', cfg.telegram.botToken);
         set('tg-chat', cfg.telegram.chatId);
         chk('fs-on', cfg.feishu.enabled);
+        /* 浏览器端（无自建应用选项）强制 Webhook 显示；已配的 App ID/Secret 仍在隐藏输入里保留 */
+        var fsMode = cfg.feishu.mode;
+        if (!document.querySelector('input[name="' + prefix + 'clawbot-fs-mode"][value="app"]')) fsMode = 'webhook';
         var modeEls = document.querySelectorAll('input[name="' + prefix + 'clawbot-fs-mode"]');
-        modeEls.forEach(function (r) { r.checked = (r.value === cfg.feishu.mode); });
+        modeEls.forEach(function (r) { r.checked = (r.value === fsMode); });
         set('fs-webhook', cfg.feishu.webhookUrl);
         set('fs-appid', cfg.feishu.appId);
         set('fs-secret', cfg.feishu.appSecret);
@@ -1087,6 +1110,7 @@
     function updateFsModeVis(prefix) {
         var sel = document.querySelector('input[name="' + prefix + 'clawbot-fs-mode"]:checked');
         var mode = sel ? sel.value : 'webhook';
+        if (!document.querySelector('input[name="' + prefix + 'clawbot-fs-mode"][value="app"]')) mode = 'webhook';
         var wh = document.getElementById(prefix + 'clawbot-fs-webhook-wrap');
         var app = document.getElementById(prefix + 'clawbot-fs-app-wrap');
         if (wh) wh.style.display = mode === 'webhook' ? '' : 'none';
@@ -1248,6 +1272,33 @@
                         discStatus.textContent = err || t('获取失败', 'Detection failed');
                     }
                 });
+                return;
+            }
+            /* 接入向导（v1.13.4）：AI 助理一键创建应用 / 打开机器人会话激活个人推送 */
+            var wizBtn = target ? target.closest('.clawbot-wizard-btn') : null;
+            if (wizBtn) {
+                var wizKind = wizBtn.getAttribute('data-clawbot-wizard');
+                var wizWrap = wizBtn.closest('.clawbot-form');
+                var wizProbe = wizWrap ? wizWrap.querySelector('input[id*="clawbot-"]') : null;
+                var wizPrefix = wizProbe && wizProbe.id.indexOf('act-') === 0 ? 'act-' : 'set-';
+                var wizStatus = document.getElementById(wizPrefix + 'clawbot-fs-status');
+                if (wizKind === 'app-create') {
+                    var wizPrompt = '帮我创建一个企业自建应用：开启机器人能力；申请 API 权限 im:message:send_as_bot、im:message.p2p_msg:readonly、im:message；创建版本，可用范围只加我本人并发布。用途：接收控制台主动推送的通知并支持斜杠指令查询。完成后告诉我 App ID 和 App Secret 在哪里查看。';
+                    copyText(wizPrompt);
+                    window.open('https://open.feishu.cn/app/ai/playground', '_blank', 'noopener');
+                    if (wizStatus) wizStatus.textContent = t('创建提示词已复制：到智能助手粘贴发送，生成项目后点「立即配置」创建应用',
+                        'Creation prompt copied: paste it in the AI assistant, then press "Configure now" to create the app');
+                } else if (wizKind === 'bot-open') {
+                    var wizAppInput = document.getElementById(wizPrefix + 'clawbot-fs-appid');
+                    var wizAppId = wizAppInput ? trim(wizAppInput.value) : '';
+                    if (!/^cli_[A-Za-z0-9]+$/.test(wizAppId)) {
+                        if (wizStatus) wizStatus.textContent = t('请先填写 App ID（cli_ 开头）', 'Fill in the App ID first (starts with cli_)');
+                        return;
+                    }
+                    window.open('https://applink.feishu.cn/client/bot/open?appId=' + encodeURIComponent(wizAppId), '_blank', 'noopener');
+                    if (wizStatus) wizStatus.textContent = t('已在飞书客户端打开机器人会话：给它发条消息后点「发送测试消息」激活个人推送',
+                        'Bot chat opened in the Feishu client: send it a message, then press "Send test message" to activate DMs');
+                }
                 return;
             }
             var btn = target ? target.closest('.clawbot-test-btn') : null;

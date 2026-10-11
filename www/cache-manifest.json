@@ -1,7 +1,7 @@
 {
-  "version": "062aae0fcdfe",
-  "generatedAt": "2026-10-11T12:43:12.539Z",
-  "totalSize": 16319326,
+  "version": "0e3c93c28bd1",
+  "generatedAt": "2026-10-11T15:25:38.355Z",
+  "totalSize": 16325287,
   "files": [
     {
       "path": "MimoTTSClient.js",
@@ -85,13 +85,13 @@
     },
     {
       "path": "doc/manual/manual.en.html",
-      "size": 48710,
-      "hash": "47f896f767ff"
+      "size": 49125,
+      "hash": "4d4a0ba2238e"
     },
     {
       "path": "doc/manual/manual.zh-CN.html",
-      "size": 44235,
-      "hash": "2eb0b635c8c8"
+      "size": 44583,
+      "hash": "4d8cf47339fb"
     },
     {
       "path": "doc/robot_code.txt",
@@ -125,8 +125,8 @@
     },
     {
       "path": "js/app-clawbot.js",
-      "size": 77950,
-      "hash": "73ab6017fbaf"
+      "size": 82458,
+      "hash": "5d021b69d238"
     },
     {
       "path": "js/app-core.js",
@@ -150,8 +150,8 @@
     },
     {
       "path": "js/i18n.js",
-      "size": 139912,
-      "hash": "45ac36bebce8"
+      "size": 140602,
+      "hash": "8c01ee9434b1"
     },
     {
       "path": "js/platform-bootstrap.js",

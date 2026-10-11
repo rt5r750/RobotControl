@@ -79,7 +79,7 @@
 
 - **设置页**新增第 14 组「IM 通知推送」（标题不带 Clawbot）。两平台卡片布局统一「按钮在上、说明在下、教程链接在卡内」：Telegram 卡片教程按界面语言显隐（zh=中文教程 / en=官方英文），飞书卡片放两个官方文档；状态信息在各卡片标题行右侧独立显示；说明文字含 iOS 无法侧载 Slave 时的替代用途（`#clawbot-setting`）：三开关 + Telegram 区 + 飞书区（模式 radio 切换 webhook/app 字段显隐）+ 测试发送按钮 + 说明。表单由 `ClawbotBridge.formHtml('set-')` 渲染进 `#clawbot-settings-body`，随「应用更改」保存（`performSettingsSave` 调 `collectForm('set-')`，校验失败中止保存；表单未渲染跳过不覆盖）；每次打开设置 `fillForm('set-')` 回填。
 - **激活页**新增第 11 节「通知推送（Clawbot）」：状态行 `#clawbot-act-status`（未配置/已配置 xx）+「打开设置」按钮 → 弹出 `#clawbot-modal` 大窗（body 直下，`.clawbot-modal` z-index 70，参照 self-check-modal 样式），大窗内为同一套表单（`'act-'` 前缀），保存/取消/关闭均不影响激活完成（非必要项）。`setConfig` 后 `syncActivationStatus()` 刷新状态行。
-- 测试发送读当前表单值临时套用后发送、不落库（`setConfigSilent` 恢复原配置，但保留**双平台**解析链本次回写的新会话 ID）；「自动获取会话 ID」按钮 Telegram/飞书卡片各有一枚（飞书分支走 `im/v1/chats`）。
+- 测试发送读当前表单值临时套用后发送、不落库（`setConfigSilent` 恢复原配置，但保留**双平台**解析链本次回写的新会话 ID）；「自动获取会话 ID」按钮 Telegram/飞书卡片各有一枚（飞书分支走 `im/v1/chats`，无会话时一键建「Clawbot 通知」群）。**接入向导（v1.13.4，飞书卡片）**：「AI 助理一键创建应用」复制创建提示词并打开 `open.feishu.cn/app/ai/playground`（智能助手「立即配置」可在对话内创建/关联应用）；「打开机器人会话（激活推送）」经 applink `/client/bot/open?appId=…` 打开机器人单聊激活个人推送（230101 实证解锁路径；该码官方文档与智能助手均无记载）。**浏览器端（无原生桥）飞书只渲染 Webhook 模式**（自建应用选项/字段隐藏，App ID/Secret 在隐藏输入中保留不丢）。
 
 ## 限制与边界
 
