@@ -1283,11 +1283,25 @@
                 var wizPrefix = wizProbe && wizProbe.id.indexOf('act-') === 0 ? 'act-' : 'set-';
                 var wizStatus = document.getElementById(wizPrefix + 'clawbot-fs-status');
                 if (wizKind === 'app-create') {
-                    var wizPrompt = '帮我创建一个企业自建应用：开启机器人能力；申请 API 权限 im:message:send_as_bot、im:message.p2p_msg:readonly、im:message；创建版本，可用范围只加我本人并发布。用途：接收控制台主动推送的通知并支持斜杠指令查询。完成后告诉我 App ID 和 App Secret 在哪里查看。';
+                    /* 提示词随所选模式变化：应用模式=创建企业自建应用（对齐本端实际调用的收发权限）；
+                       Webhook 模式=群自定义机器人拿 Webhook URL 的步骤（本端只调 webhook）。 */
+                    var wizModeEl = document.querySelector('input[name="' + wizPrefix + 'clawbot-fs-mode"]:checked');
+                    var wizMode = wizModeEl ? wizModeEl.value : 'webhook';
+                    if (!document.querySelector('input[name="' + wizPrefix + 'clawbot-fs-mode"][value="app"]')) wizMode = 'webhook';
+                    var wizPrompt, wizTip;
+                    if (wizMode === 'app') {
+                        wizPrompt = '帮我创建一个企业自建应用：开启机器人能力；申请 API 权限 im:message:send_as_bot（以机器人身份发消息）、im:message.p2p_msg:readonly（读取用户发给机器人的单聊消息）、im:message（读取会话消息，用于斜杠指令查询）、im:chat:readonly（发现机器人所在会话）；创建版本，可用范围只加我本人并发布。用途：接收控制台主动推送的通知并支持斜杠指令查询。完成后告诉我 App ID 和 App Secret 在哪里查看。';
+                        wizTip = t('提示词已放入剪贴板，登录后请粘贴：将让 AI 助理创建企业自建应用（含发消息/收消息权限）。生成项目后点「立即配置」创建应用，再把 App ID/Secret 填回本表单。',
+                            'Prompt copied to clipboard — paste it after signing in: it asks the AI assistant to create the enterprise custom app (with send/receive message scopes). Press "Configure now" in the generated project, then fill App ID/Secret back here.');
+                    } else {
+                        wizPrompt = '我想在飞书群里添加一个自定义机器人用于消息推送，请给出详细步骤（群设置 → 群机器人 → 添加机器人 → 自定义机器人）、如何复制 Webhook 地址，以及安全设置（关键词/IP 白名单）注意事项。';
+                        wizTip = t('提示词已放入剪贴板，登录后请粘贴：将让 AI 助理给出「在飞书群添加自定义机器人并获取 Webhook 地址」的步骤；拿到 URL 填回本表单即可推送。',
+                            'Prompt copied to clipboard — paste it after signing in: it asks the AI assistant for the steps to add a custom bot in a Feishu group and get its Webhook URL; fill the URL back here to start pushing.');
+                    }
                     copyText(wizPrompt);
+                    alert(wizTip);   /* 先明确提示再跳转，避免打开新标签后看不到任何说明 */
                     window.open('https://open.feishu.cn/app/ai/playground', '_blank', 'noopener');
-                    if (wizStatus) wizStatus.textContent = t('创建提示词已复制：到智能助手粘贴发送，生成项目后点「立即配置」创建应用',
-                        'Creation prompt copied: paste it in the AI assistant, then press "Configure now" to create the app');
+                    if (wizStatus) wizStatus.textContent = wizTip;
                 } else if (wizKind === 'bot-open') {
                     var wizAppInput = document.getElementById(wizPrefix + 'clawbot-fs-appid');
                     var wizAppId = wizAppInput ? trim(wizAppInput.value) : '';
