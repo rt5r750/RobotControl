@@ -92,7 +92,7 @@
             } else {
                 if (!trim(fs.appId)) return t('飞书已启用（自建应用）：App ID 不能为空', 'Feishu enabled (custom app): App ID must not be blank');
                 if (!trim(fs.appSecret)) return t('飞书已启用（自建应用）：App Secret 不能为空', 'Feishu enabled (custom app): App Secret must not be blank');
-                if (!trim(fs.chatId)) return t('飞书已启用（自建应用）：Chat ID 不能为空', 'Feishu enabled (custom app): Chat ID must not be blank');
+                /* 接收目标选填（v1.13.1）：留空自动发现机器人所在会话，也可填邮箱/手机号/会话或用户 ID */
             }
         }
         return null;
@@ -394,36 +394,173 @@
     function fsAppSend(cfg, text) {
         return withBindNotice('feishu', cfg, function (msg) { return fsAppSendRaw(cfg, msg, 0); }, text);
     }
-    /* 飞书单聊支持：receive_id 按前缀自动选类型——
-       oc_=群/单聊会话(chat_id)、ou_=个人(open_id，可单聊)、其他=user_id；
-       反查轮询仅支持会话 id（oc_），open_id/user_id 仅推送（UI 有说明）。 */
-    function fsReceiveType(id) {
+    /* 飞书接收目标解析（v1.13.1，官方教程免手填 Chat ID 口径）：
+       oc_=会话(chat_id)、ou_=个人(open_id)、邮箱=email（免任何 ID，发送后回写会话 ID）、
+       11 位手机号→batch_get_id 解析 open_id（需 contact:user.id:readonly）、其他=user_id；
+       留空=自动发现机器人所在会话（im/v1/chats）并回写配置与表单。
+       反查轮询仅支持会话 id（oc_）；邮箱/手机号/用户 ID 首次发送成功后即回写会话 ID 转直达。 */
+    function fsTargetType(id) {
         if (/^oc_/.test(id)) return 'chat_id';
         if (/^ou_/.test(id)) return 'open_id';
+        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(id)) return 'email';
         return 'user_id';
+    }
+    function fsResolveTarget(cfg) {
+        var rid = trim(cfg.chatId);
+        if (!rid) {
+            /* 留空全自动：先机器人所在会话（未发布也通），再应用授权范围里的唯一用户（免填一切 ID） */
+            return fsGetToken(cfg).then(function (token) {
+                return fsFetchChatList(token).then(function (chatId) {
+                    fsWriteBackChatId(chatId);
+                    return { type: 'chat_id', id: chatId };
+                }, function (chatErr) {
+                    return fsScopeUserOpenId(token).then(function (openId) {
+                        if (!openId) throw chatErr;
+                        return { type: 'open_id', id: openId };
+                    });
+                });
+            });
+        }
+        if (/^1\d{10}$/.test(rid)) {
+            return fsGetToken(cfg).then(function (token) {
+                return clawbotFetch('https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ mobiles: [rid] })
+                }).then(function (r) {
+                    var data = null;
+                    try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
+                    if (!data || data.code !== 0) {
+                        throw new Error(fsSendHint(t('手机号解析用户失败', 'Mobile-to-user resolve failed'), data && data.code, String(r.text)));
+                    }
+                    var list = (data.data && data.data.user_list) || [];
+                    var oid = list[0] && (list[0].user_id || list[0].open_id);
+                    if (!oid) throw new Error(t('未找到该手机号对应的飞书用户', 'No Feishu user found for this mobile number'));
+                    return { type: 'open_id', id: String(oid) };
+                });
+            });
+        }
+        return Promise.resolve({ type: fsTargetType(rid), id: rid });
+    }
+    /* 机器人所在会话列表（官方「获取用户或机器人所在的群列表」）：取最近活跃的正常会话 */
+    function fsFetchChatList(token) {
+        return clawbotFetch('https://open.feishu.cn/open-apis/im/v1/chats?page_size=20&sort_type=ByActiveTimeDesc', {
+            method: 'GET',
+            headers: { 'Authorization': 'Bearer ' + token }
+        }).then(function (r) {
+            var data = null;
+            try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
+            if (!data || data.code !== 0) {
+                throw new Error(fsSendHint(t('获取机器人会话列表失败', 'Failed to list bot chats'), data && data.code, String(r.text)));
+            }
+            var items = (data.data && data.data.items) || [];
+            var ok = items.filter(function (c) { return c && trim(c.chat_id) && c.chat_status !== 'dissolved'; });
+            if (!ok.length) {
+                throw new Error(t('未发现机器人所在会话：请在飞书把机器人拉进一个群（可以只有你自己），或在「接收目标」填你的飞书邮箱',
+                    'No chat found: add the bot to a Feishu group (a group with just you works), or fill your Feishu email in "Target"'));
+            }
+            return trim(ok[0].chat_id);
+        });
+    }
+    /* 发送成功后回写会话 ID（响应 data.chat_id）：邮箱/手机号/用户 ID 直发一次即转会话直达，反查轮询随之可用 */
+    function fsWriteBackChatId(chatId) {
+        if (!chatId || !/^oc_/.test(chatId)) return;
+        try {
+            var cfg = getConfig();
+            if (trim(cfg.feishu.chatId) === chatId) return;
+            cfg.feishu.chatId = chatId;
+            setConfigSilent(cfg);
+        } catch (e) { /* ignore */ }
+        Array.prototype.forEach.call(document.querySelectorAll('input[id$="clawbot-fs-chat"]'), function (el) { el.value = chatId; });
+    }
+    /* 应用授权范围里的唯一用户（contact/v3/scopes）：恰一人即视为推送对象；
+       多人/无人/无权限返回 null（由调用方回退指引）。 */
+    function fsScopeUserOpenId(token) {
+        return clawbotFetch('https://open.feishu.cn/open-apis/contact/v3/scopes?user_id_type=open_id&page_size=20', {
+            method: 'GET',
+            headers: { 'Authorization': 'Bearer ' + token }
+        }).then(function (r) {
+            var data = null;
+            try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
+            var ids = (data && data.data && data.data.user_ids) || [];
+            return (data && data.code === 0 && ids.length === 1) ? String(ids[0]) : null;
+        }, function () { return null; });
+    }
+    /* 「自动获取」兜底：无任何会话且授权用户恰一人 → 自动建「Clawbot 通知」群并拉入该用户 */
+    function fsCreateNoticeChat(token, openId) {
+        return clawbotFetch('https://open.feishu.cn/open-apis/im/v1/chats?user_id_type=open_id', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ name: 'Clawbot 通知', chat_mode: 'group', chat_type: 'private', user_id_list: [openId] })
+        }).then(function (r) {
+            var data = null;
+            try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
+            var cid = data && data.data && data.data.chat_id;
+            if (!data || data.code !== 0 || !cid) {
+                throw new Error(fsSendHint(t('创建通知会话失败', 'Failed to create the notice chat'), data && data.code, String(r.text)));
+            }
+            return trim(cid);
+        });
+    }
+    /* 错误码 → 人话指引（飞书官方常见失败原因）；无匹配码回退原始响应摘录 */
+    function fsSendHint(prefix, code, raw) {
+        var hint = '';
+        if (code === 99991672) {
+            hint = t('未开通所需 API 权限：请在飞书开放平台为应用申请 im:message 等权限（手机号解析另需 contact:user.id:readonly）并发布版本',
+                'Missing API scope: enable im:message etc. (mobile resolve also needs contact:user.id:readonly) in Feishu Open Platform, then publish');
+        } else if (code === 230006 || code === 232025 || code === 232034) {
+            hint = t('请在飞书开放平台开启机器人能力并发布应用版本', 'Enable the bot capability and publish the app version in Feishu Open Platform');
+        } else if (code === 230013) {
+            hint = t('目标用户不在应用可用范围：请把可用范围设为全员或添加该用户后重新发布',
+                'Target user is outside app availability: set availability to everyone (or add the user) and republish');
+        } else if (code === 230002) {
+            hint = t('机器人不在该目标会话：请把机器人拉进目标群', 'The bot is not in the target chat: add it to the group');
+        } else if (code === 99992351 || code === 230034) {
+            hint = t('接收目标无效：可留空自动发现，或填邮箱 / oc_ 会话 / ou_ 用户',
+                'Invalid target: leave blank for auto-discovery, or use an email / oc_ chat / ou_ user');
+        } else if (code === 230001) {
+            hint = t('请求参数无效（常见于接收目标格式不对）：可留空自动发现，或填邮箱 / oc_ 会话 / ou_ 用户',
+                'Invalid request parameter (often the target format): leave blank for auto-discovery, or use an email / oc_ chat / ou_ user');
+        } else if (code === 230101) {
+            hint = t('机器人主动发个人消息暂不可用（常见于应用未发布正式版）：点「自动获取会话 ID」一键建通知群、把机器人拉进群，或发布应用版本',
+                'Proactive DMs are temporarily unavailable (usually before the app is published): press "Auto detect Chat ID" to create a notice group, add the bot to a group, or publish the app version');
+        }
+        return prefix + (hint ? '：' + hint : '：' + String(raw || '').slice(0, 160));
     }
     function fsAppSendRaw(cfg, text, retried) {
         return fsGetToken(cfg).then(function (token) {
-            var rid = trim(cfg.chatId);
-            return clawbotFetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=' + fsReceiveType(rid), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json; charset=utf-8', 'Authorization': 'Bearer ' + token },
-                body: JSON.stringify({
-                    receive_id: rid,
-                    msg_type: 'text',
-                    content: JSON.stringify({ text: clipText(text) })
-                })
-            }).then(function (r) {
-                var data = null;
-                try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
-                if ((r.status === 401 || (data && data.code === 99991663)) && !retried) {
-                    _fsTokenCache = { token: '', expireAt: 0 };   // token 失效：清缓存重试一次（上限 1 次防死循环）
-                    return fsAppSendRaw(cfg, text, 1);
-                }
-                if (r.status !== 200 || !data || data.code !== 0) {
-                    throw new Error('Feishu sendMessage HTTP ' + r.status + ': ' + String(r.text).slice(0, 200));
-                }
-                return r;
+            return fsResolveTarget(cfg).then(function (target) {
+                return clawbotFetch('https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=' + target.type, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({
+                        receive_id: target.id,
+                        msg_type: 'text',
+                        content: JSON.stringify({ text: clipText(text) })
+                    })
+                }).then(function (r) {
+                    var data = null;
+                    try { data = JSON.parse(r.text); } catch (e) { /* ignore */ }
+                    if ((r.status === 401 || (data && data.code === 99991663)) && !retried) {
+                        _fsTokenCache = { token: '', expireAt: 0 };   // token 失效：清缓存重试一次（上限 1 次防死循环）
+                        return fsAppSendRaw(cfg, text, 1);
+                    }
+                    /* 发个人消息暂不可用（230101，常见于应用未发布正式版）：
+                       自动降级改投机器人所在会话，命中即回写会话 ID */
+                    if ((data && data.code === 230101) && !retried && target.type !== 'chat_id') {
+                        return fsGetToken(cfg).then(function (token2) {
+                            return fsFetchChatList(token2);
+                        }).then(function (chatId) {
+                            fsWriteBackChatId(chatId);
+                            return fsAppSendRaw(getConfig().feishu, text, 1);
+                        });
+                    }
+                    if (r.status !== 200 || !data || data.code !== 0) {
+                        throw new Error(fsSendHint('Feishu sendMessage HTTP ' + r.status, data && data.code, String(r.text)));
+                    }
+                    fsWriteBackChatId(data.data && data.data.chat_id);
+                    return r;
+                });
             });
         });
     }
@@ -890,12 +1027,13 @@
             '    <div id="' + id('fs-webhook-wrap') + '"><div class="activation-row"><label>Webhook URL</label><input type="text" id="' + id('fs-webhook') + '" class="setting-input" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."></div></div>' +
             '    <div id="' + id('fs-app-wrap') + '"><div class="activation-row"><label>App ID</label><input type="text" id="' + id('fs-appid') + '" class="setting-input" placeholder="飞书开放平台 App ID"></div>' +
             '      <div class="activation-row"><label>App Secret</label><input type="password" id="' + id('fs-secret') + '" class="setting-input" placeholder="飞书开放平台 App Secret"></div>' +
-            '      <div class="activation-row"><label>Chat ID</label><input type="text" id="' + id('fs-chat') + '" class="setting-input" placeholder="群/单聊会话 oc_... 或个人 open_id（ou_...）"></div></div>' +
+            '      <div class="activation-row"><label>接收目标</label><input type="text" id="' + id('fs-chat') + '" class="setting-input" placeholder="留空自动发现 / 邮箱 / oc_ 会话 / ou_ 用户 / 手机号"></div></div>' +
             '    <div class="flex flex-wrap gap-2 mt-2">' +
+            '      <button type="button" class="btn-add clawbot-discover-btn" data-clawbot-discover="feishu"><i class="fa fa-magnifying-glass mr-1"></i>自动获取会话 ID</button>' +
             '      <button type="button" class="btn-add clawbot-test-btn" data-clawbot-test="feishu"><i class="fa fa-paper-plane mr-1"></i>发送测试消息</button>' +
             '    </div>' +
             '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-webhook') + '">Webhook 模式只能推送、不能接收斜杠指令，且只能发到群（不能与机器人单聊）。</p>' +
-            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-app') + '">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并把机器人拉进目标群。可与机器人单聊：填个人 open_id（ou_ 开头，仅推送）或单聊会话 ID（oc_ 开头，支持反查）。</p>' +
+            '    <p class="text-xs text-[#8fbc8f]/70 mt-1" id="' + id('fs-note-app') + '">双向需飞书开放平台自建应用（机器人能力 + im:message 权限）并发布版本，无需手填 Chat ID：接收目标留空即全自动（自动发现机器人会话/授权用户，点「自动获取会话 ID」还能一键建「Clawbot 通知」群），也可填飞书邮箱/手机号/oc_/ou_；发送成功自动回写会话 ID，反查轮询随之可用。</p>' +
             '    <p class="text-xs text-[#8fbc8f]/70 mt-1">接入教程：<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot" target="_blank" rel="noopener noreferrer">飞书官方 · 自定义机器人 ↗</a>、<a class="underline hover:text-[#c0e4c0]" href="https://open.feishu.cn/document/client-docs/bot-v3/bot-overview" target="_blank" rel="noopener noreferrer">飞书官方 · 机器人概览 ↗</a></p>' +
             '  </div>' +
             '  <div class="clawbot-help">' +
@@ -1035,7 +1173,8 @@
                 var discWrap = discBtn.closest('.clawbot-form');
                 var discProbe = discWrap ? discWrap.querySelector('input[id*="clawbot-"]') : null;
                 var discPrefix = discProbe && discProbe.id.indexOf('act-') === 0 ? 'act-' : 'set-';
-                var discStatus = document.getElementById(discPrefix + 'clawbot-tg-status');
+                var discPlat = discBtn.getAttribute('data-clawbot-discover') || 'telegram';
+                var discStatus = document.getElementById(discPrefix + 'clawbot-' + (discPlat === 'feishu' ? 'fs' : 'tg') + '-status');
                 var discCollected = collectForm(discPrefix);
                 if (discCollected.error) {
                     if (discStatus) discStatus.textContent = discCollected.error;
@@ -1046,6 +1185,33 @@
                 if (discStatus) discStatus.textContent = t('正在获取…', 'Detecting…');
                 var savedCfg = getConfig();
                 setConfigSilent(discCollected.config);
+                /* 飞书分支：im/v1/chats 自动发现机器人所在会话（免手填 Chat ID） */
+                if (discPlat === 'feishu') {
+                    fsGetToken(discCollected.config.feishu).then(function (token) {
+                        return fsFetchChatList(token).catch(function () {
+                            /* 无任何会话：授权用户恰一人 → 一键建「Clawbot 通知」群并拉入 */
+                            return fsScopeUserOpenId(token).then(function (openId) {
+                                if (!openId) throw new Error(t('未发现会话且无法确定接收用户：请把机器人拉进群/给它发条消息，或在「接收目标」填你的飞书邮箱',
+                                    'No chat found and no target user: add the bot to a group / message it, or fill your Feishu email in "Target"'));
+                                return fsCreateNoticeChat(token, openId);
+                            });
+                        });
+                    }).then(function (chatId) {
+                        discBtn.disabled = false;
+                        setConfigSilent(savedCfg);
+                        var fsInput = discWrap ? discWrap.querySelector('input[id$="clawbot-fs-chat"]') : null;
+                        if (fsInput) fsInput.value = chatId;
+                        var cfg2 = getConfig();
+                        cfg2.feishu.chatId = chatId;
+                        setConfigSilent(cfg2);
+                        if (discStatus) discStatus.textContent = t('已获取会话 ID：', 'Chat id detected: ') + chatId + t('（已自动保存）', ' (auto-saved)');
+                    }, function (err) {
+                        discBtn.disabled = false;
+                        setConfigSilent(savedCfg);
+                        if (discStatus) discStatus.textContent = String((err && err.message) || err).slice(0, 140);
+                    });
+                    return;
+                }
                 discoverTgChatId(discCollected.config.telegram, function (chatId, err) {
                     discBtn.disabled = false;
                     setConfigSilent(savedCfg);
@@ -1088,6 +1254,10 @@
                 if (trim(after.telegram.chatId) && trim(after.telegram.chatId) !== trim(saved.telegram.chatId)) {
                     saved.telegram.chatId = after.telegram.chatId;
                     Array.prototype.forEach.call(document.querySelectorAll('input[id$="clawbot-tg-chat"]'), function (el) { el.value = after.telegram.chatId; });
+                }
+                if (trim(after.feishu.chatId) && trim(after.feishu.chatId) !== trim(saved.feishu.chatId)) {
+                    saved.feishu.chatId = after.feishu.chatId;
+                    Array.prototype.forEach.call(document.querySelectorAll('input[id$="clawbot-fs-chat"]'), function (el) { el.value = after.feishu.chatId; });
                 }
                 setConfigSilent(saved);
                 if (statusEl) {

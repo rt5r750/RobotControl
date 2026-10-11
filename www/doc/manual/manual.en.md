@@ -367,9 +367,9 @@ The device must reach `api.telegram.org` (a system proxy is usually needed in ma
 **Feishu (choose one)**
 
 - **Custom bot Webhook (push only)**: group settings → Group Bots → Add Bot → Custom Bot, copy the **Webhook URL**. This mode cannot receive slash commands and can only post to **groups** (no private chats with the bot).
-- **Custom app (bidirectional)**: create an enterprise custom app on the Feishu Open Platform → enable the bot capability → request the `im:message` scope → publish a version → add the bot to the target group; fill **App ID / App Secret / Chat ID**.
+- **Custom app (bidirectional)**: create an enterprise custom app on the Feishu Open Platform → enable the bot capability → request the `im:message` scope → publish a version; fill **App ID / App Secret** only — **no manual Chat ID needed**: leave **Target** blank for full auto (bot chats / the authorized user are detected automatically; **"Auto detect Chat ID"** can even create a "Clawbot 通知" notice group for you), or fill a Feishu email / mobile. The session id is written back after the first successful send (slash queries then work). If proactive DMs are blocked (error 230101, common before the app is published), delivery automatically falls back to the notice group.
 
-Feishu is directly reachable from mainland China with no proxy. Both platforms can be enabled at once (messages go to both; query replies return to the platform the command came from). **Private chats**: Telegram supports chatting with the bot directly; Feishu custom apps can too — use a personal open_id (starts with `ou_`, push only) or a private-chat session id (starts with `oc_`, slash queries supported) as the Chat ID.
+Feishu is directly reachable from mainland China with no proxy. Both platforms can be enabled at once (messages go to both; query replies return to the platform the command came from). **Private chats**: Telegram supports chatting with the bot directly; Feishu custom apps can too — fill your Feishu email (simplest) or a personal open_id (starts with `ou_`) as the Target; after the first successful send the private-chat session id (starts with `oc_`, slash queries supported) is written back automatically. A mobile number also works (needs the extra `contact:user.id:readonly` scope).
 
 **Slash commands (locally parsed, 0 token)**
 
