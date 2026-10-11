@@ -82,6 +82,8 @@ class MainActivity : AppCompatActivity() {
     private val DEFAULT_TTS_ENGINE = "voicedesign"
     private lateinit var ttsPrefs: SharedPreferences
     private val networkExecutor = Executors.newFixedThreadPool(2)
+    // IM 通用 HTTP 桥独立线程池：Telegram getUpdates 长轮询长时间占线程，与 TTS 合成/音频解码共池会饿死语音
+    private val httpBridgeExecutor = Executors.newFixedThreadPool(2)
 
     /** API Key 清洗：去除首尾空白与成对引号（粘贴/同步时可能带入 "sk-..."） */
     private fun normalizeApiKey(key: String?): String {
@@ -620,7 +622,7 @@ class MainActivity : AppCompatActivity() {
              *  完成后调 window.__httpFetchCallback(cbId)，结果经 getHttpFetchResult 同步取回。 */
             @JavascriptInterface
             fun httpFetchAsync(url: String, optionsJson: String, callbackId: String) {
-                networkExecutor.execute {
+                httpBridgeExecutor.execute {
                     val resultStr = try {
                         val host = java.net.URI(url).host ?: ""
                         if (host !in httpBridgeHosts) throw IllegalArgumentException("host not allowed: $host")

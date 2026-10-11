@@ -1,12 +1,12 @@
 {
-  "version": "01fa2e99d402",
-  "generatedAt": "2026-10-11T06:52:36.672Z",
-  "totalSize": 16299491,
+  "version": "fd9a78cf6826",
+  "generatedAt": "2026-10-11T08:06:14.767Z",
+  "totalSize": 16303734,
   "files": [
     {
       "path": "MimoTTSClient.js",
-      "size": 21058,
-      "hash": "45d3d0d93e54"
+      "size": 22387,
+      "hash": "22366a1777dd"
     },
     {
       "path": "RotationSprite.js",
@@ -125,13 +125,13 @@
     },
     {
       "path": "js/app-clawbot.js",
-      "size": 61578,
-      "hash": "7bec25662782"
+      "size": 64433,
+      "hash": "e103a571ad13"
     },
     {
       "path": "js/app-core.js",
-      "size": 415400,
-      "hash": "0652c174b497"
+      "size": 415459,
+      "hash": "08bfe21e59f7"
     },
     {
       "path": "js/app-desktop.js",

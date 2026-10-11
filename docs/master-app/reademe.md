@@ -84,7 +84,8 @@ Manifest 要点（2026-09 架构优化）：`MainActivity` 设 `launchMode=singl
 - `splashPlayerPrepared: Boolean` - MediaPlayer 是否已 prepare 完成
 - `safeAreaTop / safeAreaBottom: Int` - 安全区域 insets（单位：dp）
 - `imeHeightPx: Int` - 输入法高度（像素）
-- `networkExecutor: ExecutorService` - 后台线程池（2线程），用于 `mimoFetchAsync` 异步 HTTP 请求和闪屏视频缓存复制
+- `networkExecutor: ExecutorService` - 后台线程池（2线程），用于 `mimoFetchAsync` 异步 HTTP 请求、TTS 音频解码与闪屏视频缓存复制
+- `httpBridgeExecutor: ExecutorService` - IM 通用 HTTP 桥独立线程池（2线程，v1.13.0），只跑 `httpFetchAsync`——Telegram getUpdates 长轮询长时间占线程，与 TTS 合成/音频解码共池会饿死语音
 - `mimoFetchResults: ConcurrentHashMap<String, String>` - MiMo Fetch 异步响应存储（通知+拉取模式）
 - `ttsMediaPlayer: MediaPlayer?` - TTS 原生音频播放器（解决 WebView Blob URL 静默失败）
 
@@ -411,8 +412,8 @@ speak(text)
   └─ setTimeout(0) → TTS合成/播放（后台异步）
        → _synthesizeAndPlay(engine, text)
          1. 查 localStorage 缓存 → 命中则直接播放（不联网）
-         2. 未命中 → 浏览器 fetch(API_URL, ...)
-              失败 → Android.mimoFetchAsync(bodyJson, cbId)  // 异步Native HTTP代理
+         2. 未命中 → 浏览器 fetch(API_URL, ...)（20s AbortController 超时）
+              失败/超时 → Android.mimoFetchAsync(bodyJson, cbId)  // 异步Native HTTP代理（90s 兜底超时）
               完成 → __mimoFetchCallback(cbId) → Android.getMimoFetchResult(cbId) 拉取结果
               失败 → throw（由前端 speak() 外层捕获，降级到 Web Speech API）
 ```
@@ -420,6 +421,7 @@ speak(text)
 - **API 端点**：`https://api.xiaomimimo.com/v1/chat/completions`
 - **请求头**：`Content-Type: application/json; charset=utf-8`，`api-key: <APIKey>`
 - **Native 异步代理**：`MainActivity.mimoFetchAsync()` 在 `networkExecutor` 后台线程执行 HTTP 请求（connect 15s / read 60s 超时），使用 `ByteArrayOutputStream` 读取响应；完成后结果存入 `mimoFetchResults`（ConcurrentHashMap），通过 `evaluateJavascript` 通知 JS（仅传 cbId）
+- **必定结算（v1.13.0）**：直连 fetch 20s AbortController 超时、原生桥侧 90s 兜底超时——网络半通时 promise 不再永久挂起，按失败降级 Web Speech 语音（原无超时=挂起即永久静音）；`httpFetchAsync`（IM 桥）走独立 `httpBridgeExecutor`，长轮询不占 TTS 线程
 - **通知+拉取模式**：JS 收到 `__mimoFetchCallback(cbId)` 通知后，调用同步接口 `Android.getMimoFetchResult(cbId)` 拉取完整响应（JNI 传递，无大小限制），避免 `evaluateJavascript` 传递大响应（含 base64 音频，500KB-2MB）超出 Binder IPC 1MB 限制
 
 ### 原生音频播放

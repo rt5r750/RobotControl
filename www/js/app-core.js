@@ -1602,7 +1602,7 @@
             /* Clawbot 通知推送（v1.12.0）：播报内容外发（默认「主人指令：」类；
                参数修改类播报传 kind='data' 走「数据变更：」类），空白内容不推 */
             if (window.ClawbotBridge && window.ClawbotBridge.push) {
-                window.ClawbotBridge.push(kind || 'cmd', displayMsg);
+                try { window.ClawbotBridge.push(kind || 'cmd', displayMsg); } catch (e) { /* 推送异常不得中断语音 */ }
             }
 
             // 语音引擎失败：单栏弹窗提示、三栏左上角通知；不进行语音合成

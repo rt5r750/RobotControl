@@ -234,6 +234,12 @@
             },
             body: JSON.stringify(body)
         };
+        /* 直连超时（AbortController）：挂起改判失败走原生桥/本地降级，不再永久静音 */
+        var FETCH_TIMEOUT_MS = 20000;
+        var BRIDGE_TIMEOUT_MS = 90000;   // 原生桥兜底（Android 读超时 60s，留余量保证 promise 必定结算）
+        var aborter = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        if (aborter) fetchOptions.signal = aborter.signal;
+        var directTimer = aborter ? setTimeout(function() { aborter.abort(); }, FETCH_TIMEOUT_MS) : null;
 
         // 优先使用浏览器原生 fetch（异步非阻塞）
         var directFetchPromise = fetch(API_URL, fetchOptions).then(function(response) {
@@ -257,6 +263,8 @@
             log('Direct API call success, audio len=' + data.choices[0].message.audio.data.length);
             return data;
         });
+        directFetchPromise.then(clearDirect, clearDirect);
+        function clearDirect() { if (directTimer) { clearTimeout(directTimer); directTimer = null; } }
 
         // 仅当原生 fetch 失败时，才回退到 Android.mimoFetchAsync（异步非阻塞回调模式）
         if (global.Android && typeof global.Android.mimoFetchAsync === 'function') {
@@ -266,14 +274,23 @@
                     var bodyStr = JSON.stringify(body);
                     var cbId = 'mimo_' + (++_mimoCbCounter) + '_' + Date.now();
                     log('Using Android.mimoFetchAsync fallback, cbId=' + cbId + ', bodyLen=' + bodyStr.length);
+                    var settled = false;
+                    var bridgeTimer = setTimeout(function() {
+                        if (settled) return;
+                        settled = true;
+                        delete window.__mimoFetchCallbacks[cbId];
+                        reject(new Error('native mimo fetch timeout'));
+                    }, BRIDGE_TIMEOUT_MS);
                     window.__mimoFetchCallbacks[cbId] = {
-                        resolve: resolve,
-                        reject: reject
+                        resolve: function(v) { if (settled) return; settled = true; clearTimeout(bridgeTimer); resolve(v); },
+                        reject: function(e) { if (settled) return; settled = true; clearTimeout(bridgeTimer); reject(e); }
                     };
                     try {
                         global.Android.mimoFetchAsync(bodyStr, cbId);
                     } catch (e) {
                         error('Exception calling Android.mimoFetchAsync:', e.message);
+                        clearTimeout(bridgeTimer);
+                        settled = true;
                         delete window.__mimoFetchCallbacks[cbId];
                         reject(e);
                     }
